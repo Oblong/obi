@@ -122,35 +122,43 @@ def build_task():
             if user_specified_build:
                 env.run(user_specified_build)
         else:
-            # Arguments for the cmake step
-            cmake_args = env.config.get("cmake-args", [])
-            # workaround for naughty old templates
-            buggy_arg = '-G "Unix Makefiles"'
-            if buggy_arg in cmake_args:
-                cmake_args.remove(buggy_arg)
-                nag = 'Buggy cmake-arg {} detected in config and ignored.\n' \
-                      'To avoid seeing this message, remove this entry from ' \
-                      'cmake-args in project.yaml.'.format(buggy_arg)
-                print('!!!!!!!!!!!!!!!!!')
-                print('!!! BEGIN NAG !!!')
-                print('!!!!!!!!!!!!!!!!!')
-                print(nag)
-                print('(Sleeping to give you time to read this)')
-                time.sleep(4.20)
-                print('!!!!!!!!!!!!!!!!!')
-                print('!!!  END NAG  !!!')
-                print('!!!!!!!!!!!!!!!!!')
-            cmake_args = ' '.join(map(shlexquote, cmake_args))
-            sentinel_hash = hashlib.sha256(cmake_args).hexdigest()
+            if 'meson-args' in env.config:
+                # Arguments for the meson step
+                meson_args = env.config.get("meson-args", [])
+                meson_args = ' '.join(map(shlexquote, meson_args))
+                sentinel_hash = hashlib.sha256(meson_args).hexdigest()
+            elif 'cmake-args' in env.config:
+                # Arguments for the cmake step
+                cmake_args = env.config.get("cmake-args", [])
+                # workaround for naughty old templates
+                buggy_arg = '-G "Unix Makefiles"'
+                if buggy_arg in cmake_args:
+                    cmake_args.remove(buggy_arg)
+                    nag = 'Buggy cmake-arg {} detected in config and ignored.\n' \
+                          'To avoid seeing this message, remove this entry from ' \
+                          'cmake-args in project.yaml.'.format(buggy_arg)
+                    print('!!!!!!!!!!!!!!!!!')
+                    print('!!! BEGIN NAG !!!')
+                    print('!!!!!!!!!!!!!!!!!')
+                    print(nag)
+                    print('(Sleeping to give you time to read this)')
+                    time.sleep(4.20)
+                    print('!!!!!!!!!!!!!!!!!')
+                    print('!!!  END NAG  !!!')
+                    print('!!!!!!!!!!!!!!!!!')
+                cmake_args = ' '.join(map(shlexquote, cmake_args))
+                sentinel_hash = hashlib.sha256(cmake_args).hexdigest()
+            else:
+                abort("Neither meson-args nor cmake-args were set in project.yaml")
             # Arguments for the build step
             build_args = env.config.get("build-args", [])
             if len(build_args) == 1 and re.match(r"^-(j|l)\d+ -(j|l)\d+$", build_args[0]):
                 build_args = build_args[0].split(" ")
             build_args = " ".join(map(shlexquote, build_args))
             env.run("mkdir -p {0}".format(shlexquote(env.build_dir)))
-            # If running cmake succeeds, we make a file in the build directory
+            # If running cmake or meson succeeds, we make a file in the build directory
             # to signal to future obi processes that they don't need to re-run
-            # cmake (unless cmake-args, and therefore sentinel_hash, changes).
+            # cmake or meson (unless *-args, and therefore sentinel_hash, changes).
             # See issue #38 and issue #120
             sentinel_path = env.build_dir + "/hello-obi.txt"
             # this is a work-around for an apple bug to filter out the resulting
@@ -160,18 +168,36 @@ def build_task():
             warning_filter="ld: warning: text-based stub file"
             # translation from shell to pseudocode:
             #   * if the contents of SENTINEL_PATH match SENTINEL_HASH, do nothing
+            #   * else if meson-args, run meson with meson-args and write SENTINEL_HASH to SENTINEL_PATH
             #   * else, run cmake with cmake-args and write SENTINEL_HASH to SENTINEL_PATH
-            env.run(
-                "test $(cat {sentinel_path} 2>/dev/null || echo definitelynotashahash) = {sentinel_hash} "\
-                "  || (cmake -H{project_dir} -B{build_dir} {cmake_args} && " \
-                "      echo {sentinel_hash} > {sentinel_path})".format(
-                    project_dir=shlexquote(env.project_dir),
-                    build_dir=shlexquote(env.build_dir),
-                    cmake_args=cmake_args,
-                    sentinel_path=shlexquote(sentinel_path),
-                    sentinel_hash=sentinel_hash))
-            env.run("set -o pipefail; cmake --build {0} -- {1} 2>&1 | grep -v '{2}'".
-                format(shlexquote(env.build_dir), build_args, warning_filter), shell="/bin/bash")
+            # Note: meson needs to be given some hints about how to find
+            # a) itself, b) g-speak, and c) boost
+            # Hence prepending obi_extra_path to PATH, and invoking meson with obenv.
+            if 'meson-args' in env.config:
+                env.run(
+                    "test $(cat {sentinel_path} 2>/dev/null || echo definitelynotashahash) = {sentinel_hash} "\
+                    "  || (PATH={obi_extra_path}:$PATH; obenv meson {build_dir} {meson_args} && " \
+                    "      echo {sentinel_hash} > {sentinel_path})".format(
+                        project_dir=shlexquote(env.project_dir),
+                        build_dir=shlexquote(env.build_dir),
+                        obi_extra_path = env.obi_extra_path,
+                        meson_args=meson_args,
+                        sentinel_path=shlexquote(sentinel_path),
+                        sentinel_hash=sentinel_hash))
+                env.run("set -o pipefail; ninja -C {0} {1} 2>&1 | grep -v '{2}'".
+                    format(shlexquote(env.build_dir), build_args, warning_filter), shell="/bin/bash")
+            elif 'cmake-args' in env.config:
+                env.run(
+                    "test $(cat {sentinel_path} 2>/dev/null || echo definitelynotashahash) = {sentinel_hash} "\
+                    "  || (cmake -H{project_dir} -B{build_dir} {cmake_args} && " \
+                    "      echo {sentinel_hash} > {sentinel_path})".format(
+                        project_dir=shlexquote(env.project_dir),
+                        build_dir=shlexquote(env.build_dir),
+                        cmake_args=cmake_args,
+                        sentinel_path=shlexquote(sentinel_path),
+                        sentinel_hash=sentinel_hash))
+                env.run("set -o pipefail; cmake --build {0} -- {1} 2>&1 | grep -v '{2}'".
+                    format(shlexquote(env.build_dir), build_args, warning_filter), shell="/bin/bash")
 
 @task
 @parallel
