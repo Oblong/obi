@@ -88,6 +88,15 @@ pip2 install --upgrade --user git+https://github.com/Oblong/obi.git
 # Uninstalling
 pip2 uninstall oblong-obi
 ```
+
+If conflicts arise between python3 and python2, uninstall `oblong-obi` as above, then reinstall by replacing `pip2` in the above commands with `python2 -m pip`:
+```bash
+python2 -m pip install --user git+https://github.com/Oblong/obi.git
+
+# for upgrading
+python2 -m pip upgrade --user git+https://github.com/Oblong/obi.git
+```
+
 ## Templates
 
 ### Installing
