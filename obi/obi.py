@@ -121,6 +121,33 @@ def get_g_speak_home(arguments):
     return g_speak_home
 
 
+def abort_if_missing_git_submodules():
+    """
+    Die if this project is missing any git submodules
+    """
+    repo_path = os.path.dirname(task.project_yaml())
+
+    if os.path.exists(repo_path + "/.git"):
+        try:
+            # This is a git repo
+            all_submods_cmd = ["git", "submodule", "status"]
+            found_submods_cmd = ["git", "submodule", "foreach"]
+
+            all_submods = subprocess.check_output(all_submods_cmd,
+                                                  cwd=repo_path).decode("utf-8").splitlines()
+            found_submods = subprocess.check_output(found_submods_cmd,
+                                                    cwd=repo_path).decode("utf-8").splitlines()
+
+            if len(all_submods) != len(found_submods):
+                print("This project has missing submodules, please run 'git submodule update --init'")
+                sys.exit(1)
+        except SystemExit as e:
+            sys.exit(e)
+        except e:
+            pass
+
+
+
 def main():
     """
     the entry_point for obi
@@ -185,10 +212,12 @@ def main():
                          g_speak_version=g_speak_version)
         print("Project {0} created successfully!".format(arguments['<name>']))
     elif arguments['build']:
+        abort_if_missing_git_submodules()
         res = fabric.api.execute(task.room_task, room, "build")
         res.update(fabric.api.execute(fabric.api.env.rsync))
         res.update(fabric.api.execute(task.build_task))
     elif arguments['go']:
+        abort_if_missing_git_submodules()
         extras = arguments.get('<extras>', [])
         # Gracefully handle keyboard interrupts
         try:
